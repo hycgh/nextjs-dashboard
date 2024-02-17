@@ -12,6 +12,7 @@ export const authConfig = {
         if (isLoggedIn) return true;
         return false; // Redirect unauthenticated users to login page
       } else if (isLoggedIn) {
+        if (nextUrl.pathname.startsWith('/heatmap')) return true;
         return Response.redirect(new URL('/dashboard', nextUrl));
       }
       return true;
