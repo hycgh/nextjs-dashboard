@@ -1,7 +1,7 @@
 'use client';
 
 import * as echarts from 'echarts';
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   CNode,
   calculateClusterX,
@@ -32,37 +32,66 @@ export default function Page() {
     [false, false, false, false],
   ]);
 
+  const initZoomGenes: string[] = [];
+  const initZoomSamples: string[] = [];
+  const initZoomMatrix: number[][] = [];
+  const [zoomMatrix, setZoomMatrix] = useState(initZoomMatrix);
+  const [zoomGenes, setZoomGenes] = useState(initZoomGenes);
+  const [zoomSamples, setZoomSamples] = useState(initZoomSamples);
+
+  const clusterMatrix = useCallback(() => {
+    return zoomMatrix.length > 0 ? zoomMatrix : matrix;
+  }, [zoomMatrix, matrix]);
+
+  const clusterGenes = useCallback(() => {
+    return zoomGenes.length > 0 ? zoomGenes : genes;
+  }, [zoomGenes, genes]);
+
+  const clusterSamples = useCallback(() => {
+    return zoomSamples.length > 0 ? zoomSamples : samples;
+  }, [zoomSamples, samples]);
+
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setMatrix((m) => randomMatrix(m));
   }, []);
+
+  useEffect(() => {
+    setZoomGenes([]);
+    setZoomSamples([]);
+    setZoomMatrix([]);
+  }, [matrix, clusterType]);
+
   useEffect(() => {
     console.log('echarts init');
     var myChart = echarts.init(container.current);
 
     let minValue = Infinity;
     let maxValue = -Infinity;
+    let _matrix = clusterMatrix();
+    let _genes = clusterGenes();
+    let _samples = clusterSamples();
 
-    for (let i = 0; i < matrix.length; i++) {
-      for (let j = 0; j < matrix[i].length; j++) {
-        if (minValue > matrix[i][j]) {
-          minValue = matrix[i][j];
+    for (let i = 0; i < _matrix.length; i++) {
+      for (let j = 0; j < _matrix[i].length; j++) {
+        if (minValue > _matrix[i][j]) {
+          minValue = _matrix[i][j];
         }
-        if (maxValue < matrix[i][j]) {
-          maxValue = matrix[i][j];
+        if (maxValue < _matrix[i][j]) {
+          maxValue = _matrix[i][j];
         }
       }
     }
 
     //行聚类
-    let clusterHorizontal: CNode[] = genes.map((row, index) => {
+    let clusterHorizontal: CNode[] = _genes.map((row, index) => {
       return {
         children: [],
         index: index,
         level: 0,
         count: 1,
         distance: 0,
-        data: matrix[index].slice(),
+        data: _matrix[index].slice(),
       };
     });
 
@@ -70,14 +99,14 @@ export default function Page() {
     let sortClusterHorizontal = expandCluster(rootHorizontal);
 
     //列聚类
-    let clusterVertical: CNode[] = samples.map((col, index) => {
+    let clusterVertical: CNode[] = _samples.map((col, index) => {
       return {
         children: [],
         index: index,
         level: 0,
         count: 1,
         distance: 0,
-        data: matrix.map((row, k) => {
+        data: _matrix.map((row, k) => {
           return sortClusterHorizontal[k].data[index];
         }),
       };
@@ -91,10 +120,10 @@ export default function Page() {
 
     let width = myChart.getWidth();
     let height = myChart.getHeight();
-    let itemHeight = (height - 200) / genes.length;
+    let itemHeight = (height - 200) / _genes.length;
     let startY = itemHeight / 2 + 100;
 
-    let itemWidth = (width - 200) / samples.length;
+    let itemWidth = (width - 200) / _samples.length;
     let startX = itemWidth / 2 + 100;
 
     const data: number[][] = [];
@@ -125,6 +154,14 @@ export default function Page() {
           return '' + p.data[2];
         },
       },
+      toolbox: {
+        show: true,
+        feature: {
+          dataZoom: {},
+          restore: {},
+          saveAsImage: {},
+        },
+      },
       grid: {
         left: '100px',
         right: '100px',
@@ -133,14 +170,14 @@ export default function Page() {
       },
       xAxis: {
         type: 'category',
-        data: sortClusterVertical.map((one) => samples[one.index]),
+        data: sortClusterVertical.map((one) => _samples[one.index]),
         splitArea: {
           show: true,
         },
       },
       yAxis: {
         type: 'category',
-        data: sortClusterHorizontal.map((one) => genes[one.index]),
+        data: sortClusterHorizontal.map((one) => _genes[one.index]),
         splitArea: {
           show: true,
         },
@@ -162,7 +199,7 @@ export default function Page() {
         {
           name: 'Punch Card',
           type: 'heatmap',
-          data: data,
+          data,
           label: {
             show: true,
           },
@@ -176,10 +213,65 @@ export default function Page() {
       ],
     } satisfies echarts.EChartsOption);
 
+    myChart.on('datazoom', function (params: any) {
+      console.log(params);
+      if (
+        params &&
+        params.batch &&
+        params.batch[0] &&
+        params.batch[0].startValue !== undefined
+      ) {
+        let tempMatrix: number[][] = [];
+
+        for (
+          let i = params.batch[1].startValue;
+          i <= params.batch[1].endValue;
+          i++
+        ) {
+          let tempRow: number[] = [];
+          for (
+            let j = params.batch[0].startValue;
+            j <= params.batch[0].endValue;
+            j++
+          ) {
+            tempRow.push(sortClusterVertical[j].data[i]);
+          }
+          tempMatrix.push(tempRow);
+        }
+        setZoomGenes(
+          sortClusterHorizontal
+            .map((one) => _genes[one.index])
+            .slice(params.batch[1].startValue, params.batch[1].endValue + 1),
+        );
+        setZoomSamples(
+          sortClusterVertical
+            .map((one) => _samples[one.index])
+            .slice(params.batch[0].startValue, params.batch[0].endValue + 1),
+        );
+        setZoomMatrix(tempMatrix);
+      } else {
+        setZoomGenes([]);
+        setZoomSamples([]);
+        setZoomMatrix([]);
+      }
+    });
+    myChart.on('restore', (e) => {
+      setZoomGenes([]);
+      setZoomSamples([]);
+      setZoomMatrix([]);
+    });
     return () => {
       myChart.dispose();
     };
-  }, [matrix, genes, samples, clusterType]);
+  }, [
+    matrix,
+    genes,
+    samples,
+    clusterType,
+    clusterMatrix,
+    clusterGenes,
+    clusterSamples,
+  ]);
 
   const addSample = () => {
     if (samples.length >= 20) return;
